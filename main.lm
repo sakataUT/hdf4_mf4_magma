@@ -1,0 +1,407 @@
+"This is a code for Magma to compute the proposed algorithm.";
+"You can try magma in https://magma.maths.usyd.edu.au/calc/";
+"This code will be apeear after the paper published";
+"Nd : the out put of LGB";
+"#Spoly : the number of Spolynomial computed in degree d";
+"#newG : the number of basis obtained in degree d";
+"The fact that $N_d$ and $#newG$ coincide in HDF4 indicates that assumptions (H1) and (H2) hold.  ";
+"Similarly, the fact that the number of S-polynomials and $#newG$ coincide in MF4, and that a reduced Gröbner basis is successfully obtained, suggests that assumption (H3) is valid.";
+"------------------------------------------------------------";
+//parameter =================================================
+p := 2;  //characteristic
+q := 8;  //extension degree
+e := 0;  //parameter for HDF4
+n := 10; //number of variables
+m := 11; //number of polynomials
+//----------------------------------------------------------
+K := GF(p, q);
+P := PolynomialRing(K, n, "grevlex");
+Pz<z> := PolynomialRing(IntegerRing(), 1);
+//============================================================
+function MakeRandomMQ(n, m)
+Mono := MonomialsOfDegree(P, 2) join MonomialsOfDegree(P, 1) join {1};
+Mono := Reverse(Sort(Setseq(Mono)));
+
+if q eq 1 then
+    MQ := [P!0 : i in [1..m]];
+    for i in [1..m] do
+	    for j in [1..#Mono-1] do
+	        MQ[i] := MQ[i] + Random(0,p^q-1)*Mono[j];
+	    end for;
+    end for;
+else
+    MQ := [P!0 : i in [1..m]];
+    for i in [1..m] do
+	    for j in [1..#Mono-1] do
+	        MQ[i] := MQ[i] + K.1^Random(0,p^q-1)*Mono[j];
+	    end for;
+    end for;
+end if;
+
+if q eq 1 then
+    ANS := [P!Random(0, p-1) : i in [1..n]]; 
+    for i in [1..m] do
+        MQ[i] := MQ[i] - Evaluate(MQ[i], ANS);
+    end for;
+else
+    ANS := [P!K.1^Random(0, p^q-1) : i in [1..n]]; 
+    for i in [1..m] do
+        MQ[i] := MQ[i] - Evaluate(MQ[i], ANS);
+    end for;
+end if;
+
+return MQ, ANS;
+end function;
+//============================================================
+function CalcHilbertSeries(n, m)
+HSm := ((1-Pz.1^2)^m) / ((1-Pz.1)^n);
+HSm := Pz!HSm;
+HSz := Pz!0;
+for i in [0..2*n] do
+    if MonomialCoefficient(HSm, z^i) ge 0 then
+        HSz := HSz + MonomialCoefficient(HSm, z^i) * z^i;
+    else
+        break;
+    end if;
+end for;
+
+HS := Coefficients(HSz-1);
+HS := Reverse(HS);
+DREG := Degree(HSz) + 1;
+
+return HSz, HS, DREG;
+end function;
+//============================================================
+function LGB(n, m, HS, DREG)
+"-----LGB-----";
+LTG := [];
+
+NEW := [0];
+for d in [2..DREG] do
+    Md := MonomialsOfDegree(P, d);
+    Bd := [m : m in Md | NormalForm(m, LTG) ne 0];
+    Bd := Sort(Bd);
+    Bd := Reverse(Bd);
+    if d le #HS then
+        NEW := NEW cat [#Bd - HS[d]];
+    else
+        NEW := NEW cat [#Bd];
+    end if;
+    LTG := LTG cat Bd[1..NEW[d]];
+end for;
+print "N=",NEW;
+return NEW;
+end function;
+//============================================================
+function MakeGt(MQ)
+Gt := AssociativeArray();
+for mq in MQ do
+    Gt[LeadingMonomial(mq)] := mq;
+end for;
+
+return Gt;
+end function;
+//============================================================
+function Criterion(b, B1, G)
+LM := func<p | LeadingMonomial(p)>;
+i1 := b[1];
+i2 := b[2];
+tlcm := LCM(LM(G[i1]), LM(G[i2])); 
+if tlcm eq LM(G[i1]) * LM(G[i2]) then
+    return true;
+end if;
+for i in [1..#G] do
+    if IsDivisibleBy(tlcm, LM(G[i])) then
+        if Sort([i, i1]) in B1 then
+            if Sort([i, i2]) in B1 then
+                return true;
+            end if;
+        end if;
+    end if;
+end for;
+
+return false;
+end function;
+//============================================================
+function SelectPairLimited(B, d, N, G)
+LM := func<p | LeadingMonomial(p)>;
+B1 := [];
+B2 := [];
+for i in [1..#B] do
+    i1 := B[i][1];
+    i2 := B[i][2];
+    if Degree(LCM(LM(G[i1]), LM(G[i2]))) eq d then
+        B2 := B2 cat [B[i]];
+    end if;
+end for;
+B := Setseq(Set(B) diff Set(B2));
+
+Bt := [];
+for i in [1..#B2] do
+    i1 := B2[i][1];
+    i2 := B2[i][2];
+    tlcm := LCM(LM(G[i1]), LM(G[i2]));
+    Bt := Bt cat [Reverse(Sort([tlcm div LM(G[i2]), tlcm div LM(G[i1])]))];
+end for;
+ParallelSort(~Bt, ~B2);
+
+while #B2 ne 0 and #B1 ne N do
+    b := B2[1];
+    if Criterion(b, B1, G) eq false then
+        B1 := B1 cat [b];
+    end if;
+    B2 := Remove(B2, 1);
+end while;
+
+return B1, B;
+end function;
+//============================================================
+function MakeMatAB(MA, MB, LR)
+A := SparseMatrix(K, #MA, #MA);
+B := ZeroMatrix(K, #MA, #MB);
+
+for i in [1..#LR] do
+    Coef, Mon := CoefficientsAndMonomials(LR[i]); 
+    CoefMon := [[Coef[j], Mon[j]] : j in [1..#Mon] | Mon[j] in MA]; 
+    idx := 1;
+    for j in [1..#CoefMon] do
+        idx := Index(MA, CoefMon[j][2], idx);
+        A[i, idx] := CoefMon[j][1];
+    end for;
+    
+    v := [MonomialCoefficient(LR[i], m) : m in MB];
+    B[i] := Vector(v);
+end for;
+return A, B;
+end function;
+//============================================================
+function MakeMatCD(MA, MB, LS)
+C := ZeroMatrix(K, #LS, #MA);
+D := ZeroMatrix(K, #LS, #MB);
+
+for i in [1..#LS] do
+    v := [MonomialCoefficient(LS[i], m) : m in MA];
+    C[i] := Vector(v);
+    v := [MonomialCoefficient(LS[i], m) : m in MB];
+    D[i] := Vector(v);
+end for;
+return C, D;
+end function;
+//============================================================
+function ComputeP(LS, Gt)
+LM := func<p | LeadingMonomial(p)>;
+M := {};
+for s in LS do
+    M := M join Set(Monomials(s));
+end for;
+
+LGt := Reverse(Sort(Setseq(Keys(Gt))));
+
+MA := {};
+MB := {};
+MAB := {};
+LR := [];
+while M ne MAB do
+    r := Max(M diff MAB);
+    f := 0;
+    for lgt in LGt do
+        if IsDivisibleBy(r, lgt) then
+            f := Gt[lgt];
+            break;
+        end if;
+    end for;
+
+    if f ne 0 then
+        s := r div LM(f);
+        M := M join Seqset(Monomials(s * f));
+        LR := LR cat [s * f];
+        MA := MA join {r};
+    else
+        MB := MB join {r};
+    end if;
+
+    MAB := MA join MB;
+end while;
+
+MA := Reverse(Sort(Setseq(MA)));
+MB := Reverse(Sort(Setseq(MB)));
+LS := Reverse(Sort(LS));
+LR := Reverse(Sort(LR));
+
+PA, PB := MakeMatAB(MA, MB, LR);
+PC, PD := MakeMatCD(MA, MB, LS);
+
+return PA, PB, PC, PD, MA, MB;
+end function;
+//============================================================
+function TAB(A, B)
+B := A^-1 * B;
+return B;
+end function;
+//============================================================
+function TCB(B, C, D)
+D := D - C * B;
+return D;
+end function;
+//============================================================
+function TR(D)
+D := EchelonForm(D);
+return D;
+end function;
+//============================================================
+function UpdateMB(B, D, MB)
+i := 1;
+rank := Rank(D);
+while i le rank do
+    if D[i, i] eq 0 then
+        j := i;
+        while D[i, j] eq 0 do
+            j := j + 1;
+        end while;
+        B := SwapColumns(B, i, j);
+        D := SwapColumns(D, i, j);
+        m := MB[i];
+        MB[i] := MB[j];
+        MB[j] := m;
+    end if;
+    i := i + 1;
+end while;
+
+return B, D, MB;
+end function;
+//============================================================
+function TBD(B, D)
+rank := Rank(D);
+D2 := SubmatrixRange(D, 1, rank+1, rank, NumberOfColumns(D));
+B1 := SubmatrixRange(B, 1, 1, NumberOfRows(B), rank);
+B2 := SubmatrixRange(B, 1, rank+1, NumberOfRows(B), NumberOfColumns(B));
+B2 := B2 - B1 * D2;
+B1 := ZeroMatrix(K, NumberOfRows(B1), NumberOfColumns(B1));
+B := HorizontalJoin(B1, B2);
+
+return B;
+end function;
+//============================================================
+function RowEchelonForm(A, B, C, D, MB)
+B := TAB(A, B);
+D := TCB(B, C, D);
+D := TR(D);
+B, D, MB := UpdateMB(B, D, MB);
+B := TBD(B, D);
+return IdentitySparseMatrix(K, Nrows(A)), B, C, D, MB;
+end function;
+//============================================================
+function NewBasis(MB, D, G, Gt, B);
+num := #G;
+for i in [1..Nrows(D)] do
+    g := Polynomial(ElementToSequence(D[i]), MB);
+    if g ne 0 then
+        G := G cat [g];
+        B := B cat [[j, #G] : j in [1..#G-1]];
+    end if;
+end for;
+printf "#newG=%o \n",#G-num;
+
+for g in G do
+    Gt[LeadingMonomial(g)] := g;
+end for;
+
+return G, Gt, B;
+end function;
+//============================================================
+function UpdateGt(MA, MB, A, B, Gt)
+for i in [1..Nrows(A)] do
+    ga := Polynomial(ElementToSequence(A[i]), MA);
+    gb := Polynomial(ElementToSequence(B[i]), MB);
+    g := ga + gb;
+    Gt[LeadingMonomial(g)] := g;
+end for;
+
+return Gt;
+end function;
+//============================================================
+function SelectPairM(Gm, Gt)
+LM := func<p | LeadingMonomial(p)>;
+LGt := Reverse(Sort(Setseq(Keys(Gt))));
+
+LS := [];
+for f in Gm do
+    ft := 0;
+    for lgt in LGt do
+        if LM(P.n * f) eq lgt then
+            LS := LS cat [P.n * f - Gt[lgt]];
+            break;
+        end if;
+    end for;
+end for;
+
+return LS;
+end function;
+//============================================================
+function HDF4(MQ, NEW, DREG)
+"-----HDF4-----";
+MQ := Reduce(MQ);
+G := MQ;
+Gt := MakeGt(MQ);
+B := [[i, j] : i in [1..#MQ], j in [1..#MQ] | i lt j];
+for d in [3..#NEW] do
+    printf "d=%o N%o=%o ", d, d, NEW[d];
+    if d le 4 then
+        B1, B := SelectPairLimited(B, d, #B, G);
+    else
+        B1, B := SelectPairLimited(B, d, NEW[d]+e, G);
+    end if;
+    LS := [SPolynomial(G[b[1]], G[b[2]]) : b in B1];
+    printf "#Spoly=%o ", #LS;
+    PA, PB, PC, PD, MA, MB := ComputeP(LS, Gt);
+    QA, QB, QC, QD, MB := RowEchelonForm(PA, PB, PC, PD, MB);
+    G, Gt, B := NewBasis(MB, QD, G, Gt, B);
+    Gt := UpdateGt(MA, MB, QA, QB, Gt);
+
+end for;
+
+return G, Gt, B;
+end function;
+//============================================================
+function MF4(G, Gt, B, w, NEW)
+"-----MF4-----";
+B1, B := SelectPairLimited(B, #NEW+1, w, G);
+LS := [SPolynomial(G[b[1]], G[b[2]]) : b in B1];
+i := 1;
+while true do
+    printf "i=%o #Spoly=%o ", i, #LS;
+    PA, PB, PC, PD, MA, MB := ComputeP(LS, Gt);
+    QA, QB, QC, QD, MB := RowEchelonForm(PA, PB, PC, PD, MB);
+    Gm := [];
+    Gm, Gt, B := NewBasis(MB, QD, Gm, Gt, B); 
+    Gt := UpdateGt(MA, MB, QA, QB, Gt);
+
+    if #Gm eq 0 then
+        break;
+    end if;
+    LS := SelectPairM(Gm, Gt);
+    i := i+1;
+end while;
+
+return Gt; 
+end function;
+//============================================================
+printf "K=%o^%o #var=%o #poly=%o e=%o\n", p, q, n, m, e;
+MQ, ANS := MakeRandomMQ(n, m);
+// "Randomly Generated MQ Problem"; MQ; " ";
+HSz, HS, DREG := CalcHilbertSeries(n, m);
+"Hilbert series"; HSz;
+NEW := LGB(n, m, HS, DREG);
+G, Gt, B := HDF4(MQ, NEW, DREG);
+Gt := MF4(G, Gt, B, Truncate(NEW[#NEW]/2), NEW);
+"--------------";
+G := [];
+Key := Keys(Gt);
+for key in Key do
+    G := G cat [Gt[key]];
+end for;
+"Reduced Groebner Basis";
+Reduce(G);
+"Answer";
+ANS;
+quit;
